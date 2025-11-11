@@ -6,10 +6,16 @@ from src.api.api import FlameNextflowAPI
 
 
 def main():
-    flame_nextflow_api()
+    # load env
+    load_dotenv(find_dotenv())
+
+    # load cluster config
+    load_cluster_config()
+
     # init database
     database = Database()
     FlameNextflowAPI(database=database, namespace=get_current_namespace())
+
 
 if __name__ == "__main__":
     main()

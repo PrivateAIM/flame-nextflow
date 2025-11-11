@@ -14,6 +14,21 @@ CONF_MOUNT_PATH  = os.getenv("NF_CONF_MOUNT", "/conf")
 BACKOFF_LIMIT    = int(os.getenv("NF_BACKOFF_LIMIT", "0"))
 
 
+def load_cluster_config():
+    config.load_incluster_config()
+
+
+def get_current_namespace() -> str:
+    namespace_file = '/var/run/secrets/kubernetes.io/serviceaccount/namespace'
+    try:
+        with open(namespace_file, 'r') as file:
+            return file.read().strip()
+    # Handle the case where the file is not found
+    except FileNotFoundError:
+        # Fallback to a default namespace if the file is not found
+        return 'default'
+
+
 def create_nextflow_run(run: NextflowRunEntity, namespace: str = 'default') -> None:
     batch = client.BatchV1Api()
 
