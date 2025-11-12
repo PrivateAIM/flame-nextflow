@@ -26,10 +26,15 @@ class Database:
         Base.metadata.drop_all(bind=self.engine)
         Base.metadata.create_all(bind=self.engine)
 
-    def create_nf_run(self, run_id: str, analysis_id: str) -> NextflowRunDB:
+    def create_nf_run(self,
+                      run_id: str,
+                      analysis_id: str,
+                      keycloak_token: str,
+                      time_created: float) -> NextflowRunDB:
         nf_run = NextflowRunDB(run_id=run_id,
                                analysis_id=analysis_id,
-                               time_created=time.time())
+                               keycloak_token=keycloak_token,
+                               time_created=time_created)
         with self.SessionLocal() as session:
             session.add(nf_run)
             session.commit()

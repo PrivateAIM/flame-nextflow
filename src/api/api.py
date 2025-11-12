@@ -44,7 +44,7 @@ class FlameNextflowAPI:
                              response_class=JSONResponse)
         router.add_api_route("/conclude",
                              self.conclude_call,
-                             dependencies=[Depends(valid_access_token)],
+                             #dependencies=[Depends(valid_access_token)], #TODO decide on auth for this endpoint
                              methods=["POST"],
                              response_class=JSONResponse)
         router.add_api_route("/healthz",
@@ -62,8 +62,9 @@ class FlameNextflowAPI:
     def run_call(self, body: CreateNextflowRun):
         nf_run = NextflowRunEntity(analysis_id=body.analysis_id,
                                    pipeline_name=body.pipeline_name,
-                                   run_args=body.run_args)
-        nf_run.start(self.database)
+                                   run_args=body.run_args,
+                                   keycloak_token=body.keycloak_token)
+        nf_run.start(self.database, input_location, output_location)
         return {'status': f"Nextflow run started (id={nf_run.run_id})."}
 
     def conclude_call(self, body: ConcludeNextflowRun):

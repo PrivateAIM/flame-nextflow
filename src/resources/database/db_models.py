@@ -19,7 +19,5 @@ class NextflowRunDB(Base):
     id = Column(Integer, primary_key=True, index=True)
     run_id = Column(String, unique=True, index=True)
     analysis_id = Column(String, unique=False, index=True)
-    pipeline_name =  Column(String, nullable=True)
-    run_args = Column(JSON, nullable=True)
+    keycloak_token =  Column(String, unique=False, nullable=True)
     time_created = Column(Float, nullable=True)
-    time_updated = Column(Float, nullable=True)

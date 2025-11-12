@@ -9,10 +9,10 @@ PVC_NAME         = os.getenv("NF_PVC", "nextflow-work")
 NF_IMAGE         = os.getenv("NF_IMAGE", "nextflow/nextflow:24.10.0")
 CONFIGMAP_NAME   = os.getenv("NF_CONFIGMAP", "nextflow-config")
 CONFIGMAP_KEY    = os.getenv("NF_CONFIGMAP_KEY", "nextflow.config")
-WORK_MOUNT_PATH  = os.getenv("NF_WORK_MOUNT", "/workspace")
-CONF_MOUNT_PATH  = os.getenv("NF_CONF_MOUNT", "/conf")
 BACKOFF_LIMIT    = int(os.getenv("NF_BACKOFF_LIMIT", "0"))
 
+WEBHOOK_URL = os.getenv("WEBHOOK_URL", "flame-nextflow")+"/conclude"  # <-- set me
+                           # <-- kubectl apply -f secret below
 
 def load_cluster_config():
     config.load_incluster_config()
@@ -30,48 +30,73 @@ def get_current_namespace() -> str:
 
 
 def create_nextflow_run(run: NextflowRunEntity, namespace: str = 'default') -> None:
+
     batch = client.BatchV1Api()
 
     job_name = run.run_id
-
+    work_mount_path = "/workspace/" + run.run_id
+    conf_mount_path = "/conf/" + run.run_id
     # Build the nextflow command
     pieces = [
         "nextflow", "run", run.pipeline_name,
-        "-c", f"{CONF_MOUNT_PATH}/" + CONFIGMAP_KEY,
+        "-c", f"{conf_mount_path}/" + CONFIGMAP_KEY,
     ]
     if run.run_args:
         # Prevent shell injection by splitting params safely if you pass them as a single string
         pieces.extend(run.run_args)
 
     command = " ".join(pieces)
+    notify_wrapper = f"""
+    set -Eeuo pipefail
 
+    notify() {{
+      status="$1"
+      # Build JSON body matching ConcludeNextflowRun
+      body=$(printf '{{"run_id":"%s","run_status":"%s","storage_location":"%s"}}' \
+                   "$RUN_ID" "$status" "$STORAGE_LOCATION")
 
+      # Exponential backoff: 1,2,4,8,16s (tunable)
+      for d in 1 2 4 8 16; do
+        if curl -fsS -X POST "$WEBHOOK_URL" \
+             -H "Content-Type: application/json" \
+             --data "$body"; then
+          echo "Conclude webhook delivered: $status"
+          return 0
+        fi
+        echo "Webhook attempt failed; retrying in $d s..." >&2
+        sleep "$d"
+      done
+      echo "Webhook failed after retries; continuing." >&2
+      return 0  # don't block Job termination on notify issues
+    }}
+
+    echo 'Nextflow:' && nextflow -version
+    echo 'Using config:' && cat {conf_mount_path}/{CONFIGMAP_KEY}
+
+    # ---- run your existing command; notify on both paths ----
+    if {command}; then
+      notify "succeeded"
+    else
+      notify "failed"
+      exit 1
+    fi
+    """
 
     container = client.V1Container(
         name="nf",
         image=NF_IMAGE,
         image_pull_policy="IfNotPresent",
         command=["/bin/bash", "-lc"],
-        args=[f"""
-                set -Eeuo pipefail
-                notify() {{
-                    wget -qO- --header="X-Job-Name: ${job_name}" \
-                    --post-data "status=$1&node=${NODE_NAME}" \
-                    https://example.com/webhook || true
-                }}
-                trap'notify fail' ERR
-                echo 'Nextflow:' && nextflow -version && \
-                echo 'Using config:' && cat {CONF_MOUNT_PATH}/{CONFIGMAP_KEY} && \
-                {command}
-                notify success 
-            """],
+        args=[notify_wrapper],
         env=[
-            client.V1EnvVar(name="NXF_HOME", value=f"{WORK_MOUNT_PATH}/.nextflow"),
-            client.V1EnvVar(name="NXF_WORK", value=f"{WORK_MOUNT_PATH}/work"),
+            client.V1EnvVar(name="NXF_HOME", value=f"{work_mount_path}/.nextflow"),
+            client.V1EnvVar(name="NXF_WORK", value=f"{work_mount_path}/work"),
+            client.V1EnvVar(name="RUN_ID", value=run.run_id),
+            client.V1EnvVar(name="WEBHOOK_URL", value=WEBHOOK_URL),
         ],
         volume_mounts=[
-            client.V1VolumeMount(name="work", mount_path=WORK_MOUNT_PATH),
-            client.V1VolumeMount(name="config", mount_path=CONF_MOUNT_PATH),
+            client.V1VolumeMount(name="work", mount_path=work_mount_path),
+            client.V1VolumeMount(name="config", mount_path=conf_mount_path),
         ],
     )
 
