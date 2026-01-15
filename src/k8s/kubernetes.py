@@ -12,7 +12,7 @@ CONFIGMAP_NAME   = os.getenv("NF_CONFIGMAP", "nextflow-config")
 CONFIGMAP_KEY    = os.getenv("NF_CONFIGMAP_KEY", "nextflow.config")
 BACKOFF_LIMIT    = int(os.getenv("NF_BACKOFF_LIMIT", "0"))
 
-WEBHOOK_URL = os.getenv("WEBHOOK_URL", "flame-nextflow") + "/conclude"  # <-- set me
+WEBHOOK_URL = os.getenv("WEBHOOK_URL", "nextflow-service:8000") + "/nextflow/conclude"  # <-- set me
                            # <-- kubectl apply -f secret below
 
 
@@ -24,14 +24,23 @@ def create_nextflow_run(input_data: Any,
     batch = client.BatchV1Api()
 
     job_name = run_id
-    work_mount_path = "/workspace/" + run_id
-    conf_mount_path = "/conf/" + run_id
+    # Mount PVC at /workspace to match Nextflow config expectations
+    work_mount_path = "/workspace"
+    conf_mount_path = "/conf"
+    # Use run-specific subdirectories within /workspace
+    run_work_dir = f"{work_mount_path}/{run_id}"
+
     # Build the nextflow command
     pieces = [
         "nextflow", "run", pipeline_name,
-        "-c", f"{conf_mount_path}/" + CONFIGMAP_KEY,
-        "--input_data", f"'{work_mount_path}/input'",
+        "-c", f"{conf_mount_path}/{CONFIGMAP_KEY}",
+        "-work-dir", f"{run_work_dir}/work",
     ]
+
+    # Add input_data parameter if needed by the pipeline
+    if input_data:
+        pieces.extend(["--input_data", f"'{run_work_dir}/input'"])
+
     if run_args:
         # Prevent shell injection by splitting params safely if you pass them as a single string
         pieces.extend(run_args)
@@ -80,11 +89,11 @@ def create_nextflow_run(input_data: Any,
         command=["/bin/bash", "-lc"],
         args=[notify_wrapper],
         env=[
-            client.V1EnvVar(name="NXF_HOME", value=f"{work_mount_path}/.nextflow"),
-            client.V1EnvVar(name="NXF_WORK", value=f"{work_mount_path}/work"),
+            client.V1EnvVar(name="NXF_HOME", value=f"{run_work_dir}/.nextflow"),
+            client.V1EnvVar(name="NXF_WORK", value=f"{run_work_dir}/work"),
             client.V1EnvVar(name="RUN_ID", value=run_id),
             client.V1EnvVar(name="WEBHOOK_URL", value=WEBHOOK_URL),
-            client.V1EnvVar(name="STORAGE_LOCATION", value=work_mount_path),
+            client.V1EnvVar(name="STORAGE_LOCATION", value=run_work_dir),
         ],
         volume_mounts=[
             client.V1VolumeMount(name="work", mount_path=work_mount_path),
